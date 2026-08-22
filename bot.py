@@ -67,6 +67,11 @@ def tr_sayi(x, ondalik=2):
     return s.replace(",", "#").replace(".", ",").replace("#", ".")
 
 
+def tr_yuzde(x, ondalik=2):
+    """9.99 -> '+9,99'   (işaret her zaman görünür, ondalık virgülle)"""
+    return f"{x:+.{ondalik}f}".replace(".", ",")
+
+
 def _sutun_bul(df, adaylar):
     """Kütüphane sürümleri arasında sütun adı değişebiliyor."""
     for ad in adaylar:
@@ -101,12 +106,41 @@ def haftalik_degisim(seri: pd.Series):
     return son, (son - onceki) / onceki * 100, tam
 
 
+def metal_serisi(sembol):
+    """Metalin kapanış serisini döndürür.
+
+    borsapy'nin günlük "ons-altin" serisi canlidoviz'in METAL_IDS listesinden
+    geliyor; o liste TL cinsinden fiyat veriyor (ve altınla da tutmuyor:
+    ~114.000, oysa ons altın TL karşılığı ~221.000). "$" diye göstermek
+    yaklaşık 25 kat hatalı sonuç üretiyordu. Ons gümüş (XAG-USD) ise
+    COMMODITY_IDS'ten geldiği için gerçekten USD; o yüzden gümüş doğruydu.
+
+    borsapy'de USD ons altın için emtia ID'si yok. Doğru kaynak TradingView'daki
+    OANDA:XAUUSD - history() bunu sadece saatlik/dakikalık isteklerde kullanıyor,
+    biz günlük için doğrudan çağırıyoruz.
+    """
+    fx = bp.FX(sembol)
+    if sembol == "ons-altin":
+        df = fx._tradingview.get_history(
+            symbol="XAUUSD", exchange="OANDA", period="1mo", interval="1d"
+        )
+    else:
+        df = fx.history(period="1mo")
+
+    seri = df["Close"].dropna()
+    # TradingView tz bilgisi olan indeks döndürüyor, diğer kaynaklar tz'siz.
+    # Karıştırınca tarih karşılaştırması patlıyor; TR saatine çevirip düşürüyoruz.
+    if seri.index.tz is not None:
+        seri.index = seri.index.tz_convert(TR).tz_localize(None)
+    return seri
+
+
 def metal_satirlari():
     """(veri_tarihi, satır_listesi) döndürür."""
     satirlar, tarihler = [], []
     for sembol, ad, birim in METALLER:
         try:
-            seri = bp.FX(sembol).history(period="1mo")["Close"].dropna()
+            seri = metal_serisi(sembol)
             son, degisim, tam = haftalik_degisim(seri)
             if son is None:
                 raise ValueError("yeterli veri yok")
@@ -114,10 +148,9 @@ def metal_satirlari():
             tarihler.append(seri.index[-1])   # verinin gerçekten ait olduğu gün
             ok = "🟢" if degisim >= 0 else "🔴"
             isaret = "" if tam else "~"       # tam hafta yoksa yaklaşık olduğunu belirt
-            ondalik = 2 if son >= 100 else 4
             satirlar.append(
-                f"{ok} <b>{ad}:</b> {tr_sayi(son, ondalik)} {birim}  "
-                f"<i>(1H: {isaret}{degisim:+.2f}%)</i>"
+                f"{ok} <b>{ad}:</b> {tr_sayi(son, 0)} {birim}  "
+                f"<i>(1H: {isaret}{tr_yuzde(degisim)}%)</i>"
             )
         except Exception as e:
             # Tek kaynak çökerse mesajın tamamı gitmesin
@@ -246,11 +279,12 @@ def hisse_satirlari(esik):
                 satirlar.append(f"• <b>{kod}</b>")
                 continue
 
-            satir = f"• <b>{kod}</b>  {tr_sayi(fiyat)} TL  <i>{gunluk:+.2f}%"
+            satir = (f"• <b>{kod}:</b>  {tr_sayi(fiyat)} TL  "
+                     f"{tr_yuzde(gunluk)}%")
             if haftalik is not None and haftalik == haftalik:
                 isaret = "" if tam else "~"
-                satir += f" · 1H {isaret}{haftalik:+.1f}%"
-            satirlar.append(satir + "</i>")
+                satir += f"  <i>(1H: {isaret}{tr_yuzde(haftalik, 1)}%)</i>"
+            satirlar.append(satir)
 
     if not_:
         satirlar.append(not_)
@@ -278,7 +312,12 @@ def mesaj_olustur():
     except Exception as e:
         parcalar.append(f"⚠️ Hisse verisi alınamadı: {type(e).__name__}: {e}")
 
-    return "\n".join(parcalar)
+    metin = "\n".join(parcalar)
+    # '~' işareti hem metal hem hisse satırlarında çıkabiliyor; kullanıldıysa
+    # ne demek olduğunu mesajın sonunda bir kez açıklıyoruz.
+    if "1H: ~" in metin:
+        metin += "\n\n<i>~ = 7 günlük geçmiş yok; en eski kayda göre hesaplandı.</i>"
+    return metin
 
 
 def gonder(metin):
