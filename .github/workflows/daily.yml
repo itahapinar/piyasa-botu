@@ -7,13 +7,14 @@ on:
   schedule:
     # DİKKAT: cron her zaman UTC'dir. Türkiye UTC+3 (yaz saati yok).
     # İstediğin TSİ saatinden 3 saat çıkar.
-    #   08:30 TSİ -> 05:30 UTC
+    #   09:00 TSİ -> 06:00 UTC
     # Alanlar: dakika saat ayın_günü ay haftanın_günü
     # Son alan "*" = her gün (hafta sonu dahil).
-    # Cumartesi/Pazar mesajlarında veriler Cuma kapanışını gösterir;
-    # bot hangi güne ait olduğunu mesajda zaten yazıyor.
     # Sadece hafta içi istersen son alanı 1-5 yap.
-    - cron: "30 5 * * *"
+    #
+    # NOT: GitHub tam saatlerde (:00) çok yoğun olduğu için gecikme büyür.
+    # Daha isabetli zamanlama istersen dakikayı kaydır: "7 6 * * *" gibi.
+    - cron: "0 6 * * *"
 
   # Actions sekmesinden "Run workflow" ile elle tetiklemeni sağlar.
   # Test için şart; bunu koymazsan ertesi sabahı beklemek zorunda kalırsın.
