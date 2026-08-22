@@ -27,9 +27,18 @@ import borsapy as bp
 
 DRY_RUN = "--dry" in sys.argv
 
+def _esik_oku(varsayilan=9.0):
+    """Boş veya bozuk değer gelirse çökmek yerine varsayılana döner."""
+    ham = (os.environ.get("TAVAN_ESIK") or "").strip()
+    try:
+        return float(ham.replace(",", "."))   # '9,5' yazılırsa da kabul et
+    except ValueError:
+        return varsayilan
+
+
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-ESIK = float(os.environ.get("TAVAN_ESIK", "9.0"))
+ESIK = _esik_oku()
 
 if not DRY_RUN and (not TOKEN or not CHAT_ID):
     sys.exit("HATA: TELEGRAM_BOT_TOKEN ve TELEGRAM_CHAT_ID tanımlı değil.")
@@ -70,18 +79,26 @@ def _sutun_bul(df, adaylar):
 
 
 def haftalik_degisim(seri: pd.Series):
-    """Son kapanış + 7 takvim günü öncesine göre % değişim."""
+    """(son_fiyat, yüzde_değişim, tam_hafta_mı) döndürür.
+
+    Üçüncü değer False ise elimizde 7 günlük geçmiş yok (yeni halka arz gibi);
+    hesap en eski kayda göre yapılmıştır, "1 haftalık" demek yanıltıcı olur.
+    """
     seri = seri.dropna()
     if len(seri) < 2:
-        return None, None
+        return None, None, False
 
     son = float(seri.iloc[-1])
     hedef = seri.index[-1] - pd.Timedelta(days=7)
     # Tam 7 gün öncesi tatile denk gelebilir; ondan eski en yakın kaydı alıyoruz
     gecmis = seri.index[seri.index <= hedef]
-    onceki = float(seri.loc[gecmis[-1]]) if len(gecmis) else float(seri.iloc[0])
 
-    return son, (son - onceki) / onceki * 100
+    if len(gecmis):
+        onceki, tam = float(seri.loc[gecmis[-1]]), True
+    else:
+        onceki, tam = float(seri.iloc[0]), False
+
+    return son, (son - onceki) / onceki * 100, tam
 
 
 def metal_satirlari():
@@ -90,16 +107,17 @@ def metal_satirlari():
     for sembol, ad, birim in METALLER:
         try:
             seri = bp.FX(sembol).history(period="1mo")["Close"].dropna()
-            son, degisim = haftalik_degisim(seri)
+            son, degisim, tam = haftalik_degisim(seri)
             if son is None:
                 raise ValueError("yeterli veri yok")
 
             tarihler.append(seri.index[-1])   # verinin gerçekten ait olduğu gün
             ok = "🟢" if degisim >= 0 else "🔴"
+            isaret = "" if tam else "~"       # tam hafta yoksa yaklaşık olduğunu belirt
             ondalik = 2 if son >= 100 else 4
             satirlar.append(
                 f"{ok} <b>{ad}:</b> {tr_sayi(son, ondalik)} {birim}  "
-                f"<i>(1H: {degisim:+.2f}%)</i>"
+                f"<i>(1H: {isaret}{degisim:+.2f}%)</i>"
             )
         except Exception as e:
             # Tek kaynak çökerse mesajın tamamı gitmesin
@@ -160,17 +178,24 @@ def adaylari_bul(evren, esik):
 
 
 def dogrula(kodlar, esik):
-    """Adayları gerçek kapanış verisiyle teyit eder."""
+    """Adayları gerçek kapanış verisiyle teyit eder, haftalık değişimi de çıkarır."""
     sonuc = []
     for kod in kodlar:
         try:
-            kapanis = bp.Ticker(kod).history(period="5d")["Close"].dropna()
+            # 5d yerine 1mo: aynı istek sayısı, ama haftalık hesap için yeterli geçmiş
+            kapanis = bp.Ticker(kod).history(period="1mo")["Close"].dropna()
             if len(kapanis) < 2:
                 continue
+
             son, onceki = float(kapanis.iloc[-1]), float(kapanis.iloc[-2])
-            degisim = (son - onceki) / onceki * 100
-            if degisim >= esik:
-                sonuc.append((kod, son, degisim, kapanis.index[-1]))
+            gunluk = (son - onceki) / onceki * 100
+            if gunluk < esik:
+                continue
+
+            # Metaller için yazdığımız fonksiyonu aynen kullanıyoruz
+            _, haftalik, tam = haftalik_degisim(kapanis)
+
+            sonuc.append((kod, son, gunluk, haftalik, tam, kapanis.index[-1]))
         except Exception as e:
             log(f"  {kod} doğrulanamadı: {type(e).__name__}")
     return sonuc
@@ -193,15 +218,18 @@ def hisse_satirlari(esik):
     if len(adaylar) <= MAX_DOGRULAMA:
         kayitlar, not_ = dogrula(adaylar, esik), ""
     else:
-        kayitlar = [(k, float("nan"), float("nan"), None) for k in adaylar]
+        nan = float("nan")
+        kayitlar = [(k, nan, nan, nan, False, None) for k in adaylar]
         not_ = "\n<i>(Aday sayısı yüksek, kapanış doğrulaması atlandı.)</i>"
 
     if not kayitlar:
         return None, ["<i>Eşiği aşan hisse yok.</i>"]
 
     gruplar = {"Yıldız Pazar": [], "Ana / Alt Pazar": [], "Yatırım Ortaklıkları": []}
-    for kod, fiyat, deg, _ in kayitlar:
-        gruplar.setdefault(evren.get(kod, "Diğer"), []).append((kod, fiyat, deg))
+    for kod, fiyat, gunluk, haftalik, tam, _ in kayitlar:
+        gruplar.setdefault(evren.get(kod, "Diğer"), []).append(
+            (kod, fiyat, gunluk, haftalik, tam)
+        )
 
     tarihler = [t for *_, t in kayitlar if t is not None]
     tarih = max(tarihler) if tarihler else None
@@ -212,11 +240,17 @@ def hisse_satirlari(esik):
             continue
         liste.sort(key=lambda x: -x[2] if x[2] == x[2] else 0)   # NaN güvenli
         satirlar.append(f"\n<b>— {pazar}</b> ({len(liste)})")
-        for kod, fiyat, deg in liste:
-            if deg == deg:                                       # NaN değilse
-                satirlar.append(f"• <b>{kod}</b>  {tr_sayi(fiyat)} TL  <i>({deg:+.2f}%)</i>")
-            else:
+
+        for kod, fiyat, gunluk, haftalik, tam in liste:
+            if gunluk != gunluk:                 # NaN ise doğrulama yapılmamış
                 satirlar.append(f"• <b>{kod}</b>")
+                continue
+
+            satir = f"• <b>{kod}</b>  {tr_sayi(fiyat)} TL  <i>{gunluk:+.2f}%"
+            if haftalik is not None and haftalik == haftalik:
+                isaret = "" if tam else "~"
+                satir += f" · 1H {isaret}{haftalik:+.1f}%"
+            satirlar.append(satir + "</i>")
 
     if not_:
         satirlar.append(not_)
@@ -248,18 +282,28 @@ def mesaj_olustur():
 
 
 def gonder(metin):
-    r = requests.post(
-        f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-        json={
-            "chat_id": CHAT_ID,
-            "text": metin,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-    log("Gönderildi.")
+    # Telegram tek mesajda 4096 karakter kabul ediyor. Liste uzun bir günde
+    # sınırı aşarsak API mesajın tamamını reddeder; o yüzden kendimiz kısaltıyoruz.
+    if len(metin) > 4000:
+        metin = metin[:3900].rsplit("\n", 1)[0] + "\n\n<i>… liste kısaltıldı.</i>"
+
+    try:
+        r = requests.post(
+            f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            json={
+                "chat_id": CHAT_ID,
+                "text": metin,
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            },
+            timeout=30,
+        )
+        r.raise_for_status()
+        log("Gönderildi.")
+    except requests.HTTPError as e:
+        # Telegram hatanın açıklamasını gövdede döndürüyor; teşhis için değerli
+        log(f"HATA: {e} | {e.response.text}")
+        raise
 
 
 if __name__ == "__main__":
