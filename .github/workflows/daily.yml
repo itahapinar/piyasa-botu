@@ -1,0 +1,51 @@
+# Bu dosya repo içinde şu yolda olmalı:  .github/workflows/daily.yml
+# Klasör adları dahil birebir aynı olmalı, yoksa GitHub görmez.
+
+name: Sabah Piyasa Botu
+
+on:
+  schedule:
+    # DİKKAT: cron her zaman UTC'dir. Türkiye UTC+3 (yaz saati yok).
+    # İstediğin TSİ saatinden 3 saat çıkar.
+    #   08:30 TSİ -> 05:30 UTC
+    # Alanlar: dakika saat ayın_günü ay haftanın_günü
+    # Son alan "*" = her gün (hafta sonu dahil).
+    # Cumartesi/Pazar mesajlarında veriler Cuma kapanışını gösterir;
+    # bot hangi güne ait olduğunu mesajda zaten yazıyor.
+    # Sadece hafta içi istersen son alanı 1-5 yap.
+    - cron: "30 5 * * *"
+
+  # Actions sekmesinden "Run workflow" ile elle tetiklemeni sağlar.
+  # Test için şart; bunu koymazsan ertesi sabahı beklemek zorunda kalırsın.
+  workflow_dispatch:
+    inputs:
+      esik:
+        description: "Yüzde eşiği (elle çalıştırmada)"
+        required: false
+        default: "9.0"
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25      # takılırsa sonsuza kadar dakika yakmasın
+
+    steps:
+      # 1) Repo'yu geçici makineye kopyala
+      - uses: actions/checkout@v4
+
+      # 2) Python kur, pip önbelleğini aç (sonraki çalışmalar hızlansın)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # 3) Bağımlılıkları kur
+      - run: pip install -r requirements.txt
+
+      # 4) Botu çalıştır
+      - run: python bot.py
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Elle çalıştırıldıysa girilen değeri, zamanlanmışsa 9.0 kullan
+          TAVAN_ESIK: ${{ github.event.inputs.esik || '9.0' }}
