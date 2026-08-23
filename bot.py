@@ -4,6 +4,7 @@ Sabah Piyasa Botu
 Her sabah Telegram'a gönderir:
   1. Gram/ons altın, gram/ons gümüş -> son fiyat + 1 haftalık % değişim
   2. Borsa genelinde eşiği aşarak kapatan hisseler, pazarına göre gruplanmış
+     ve BIST Katılım Tüm (XKTUM) kapsamında olanlar işaretlenmiş
 
 Ortam değişkenleri:
   TELEGRAM_BOT_TOKEN   (zorunlu)
@@ -180,7 +181,12 @@ def tum_sirketler():
 
 
 def evreni_kur():
-    """{hisse_kodu: pazar_adi}. XUTUM = Yıldız+Ana+Alt, XYORT = yatırım ortaklıkları.
+    """(evren, katilim) döndürür.
+
+    evren   : {hisse_kodu: pazar_adi}
+    katilim : BIST Katılım Tüm (XKTUM) kapsamındaki kodların kümesi
+
+    XUTUM = Yıldız+Ana+Alt, XYORT = yatırım ortaklıkları.
 
     Endeks bileşenleri pazar etiketi için doğru kaynak ama tarama evreni olarak
     eksik kalıyor: endekslere henüz girmemiş yeni şirketler ve Yakın İzleme
@@ -200,6 +206,9 @@ def evreni_kur():
             return set()
 
     yildiz, tum, yat_ort = bilesenler("XYLDZ"), bilesenler("XUTUM"), bilesenler("XYORT")
+    # Katılım finans ilkelerine uygunluğu bulunan şirketler. Liste dönemsel
+    # güncelleniyor; her çalıştırmada taze çektiğimiz için elle bakım gerekmiyor.
+    katilim = bilesenler("XKTUM")
     if not tum and not yildiz:
         raise RuntimeError("Hiçbir endeks bileşeni alınamadı.")
 
@@ -216,8 +225,9 @@ def evreni_kur():
         evren.setdefault(kod, "Diğer")          # endekste yoksa etiketsiz kalsın
 
     log(f"Evren: {len(evren)} hisse "
-        f"(Yıldız {len(yildiz)}, endeks dışı {len(evren) - endeksli})")
-    return evren
+        f"(Yıldız {len(yildiz)}, endeks dışı {len(evren) - endeksli}, "
+        f"katılım {len(katilim)})")
+    return evren, katilim
 
 
 class VeriYok(Exception):
@@ -269,7 +279,7 @@ def dogrula(kodlar, esik):
 
 def hisse_satirlari(esik):
     """(tarih, satır_listesi) döndürür."""
-    evren = evreni_kur()
+    evren, katilim = evreni_kur()
     try:
         adaylar = adaylari_bul(evren, esik)
     except VeriYok as e:
@@ -309,7 +319,8 @@ def hisse_satirlari(esik):
 
         for kod, fiyat, gunluk, haftalik, tam in liste:
             if gunluk != gunluk:                 # NaN ise doğrulama yapılmamış
-                satirlar.append(f"• <b>{kod}</b>")
+                satirlar.append(f"• <b>{kod}</b>"
+                                + (" ☪️" if kod in katilim else ""))
                 continue
 
             satir = (f"• <b>{kod}:</b>  {tr_sayi(fiyat)} TL  "
@@ -317,8 +328,12 @@ def hisse_satirlari(esik):
             if haftalik is not None and haftalik == haftalik:
                 isaret = "" if tam else "~"
                 satir += f"  <i>(1H: {isaret}{tr_yuzde(haftalik, 1)}%)</i>"
+            if kod in katilim:
+                satir += " ☪️"
             satirlar.append(satir)
 
+    if katilim:
+        satirlar.append("\n<i>☪️ = BIST Katılım Tüm (XKTUM) kapsamında</i>")
     if not_:
         satirlar.append(not_)
     return tarih, satirlar
