@@ -162,8 +162,36 @@ def metal_satirlari():
 # ---------------------------------------------------------------- hisseler
 
 
+def tum_sirketler():
+    """BIST'in tam şirket listesi (endekslerin kapsamadıklarını yakalamak için).
+
+    Kaynak çökerse tarama endeks evreniyle devam etsin diye boş küme dönüyoruz.
+    """
+    try:
+        df = bp.companies()
+        sutun = _sutun_bul(df, ["ticker", "symbol", "code"])
+        if sutun is None:
+            log(f"  companies() sembol sütunu yok: {list(df.columns)}")
+            return set()
+        return {str(kod).upper().strip() for kod in df[sutun]}
+    except Exception as e:
+        log(f"  companies() alınamadı: {type(e).__name__}")
+        return set()
+
+
 def evreni_kur():
-    """{hisse_kodu: pazar_adi}. XUTUM = Yıldız+Ana+Alt, XYORT = yatırım ortaklıkları."""
+    """{hisse_kodu: pazar_adi}. XUTUM = Yıldız+Ana+Alt, XYORT = yatırım ortaklıkları.
+
+    Endeks bileşenleri pazar etiketi için doğru kaynak ama tarama evreni olarak
+    eksik kalıyor: endekslere henüz girmemiş yeni şirketler ve Yakın İzleme
+    Pazarı'ndakiler dışarıda kalıyor - ki bunlar tavan yapmaya en meyilli
+    hisseler. 21.08.2026 seansında GATEG %9,55 ile kapattığı hâlde hiçbir
+    endekste yer almadığı için listeye girmemişti.
+
+    Bu yüzden evreni bp.companies() ile genişletiyoruz. Endekslerde bulunmayan
+    kodlar "Diğer" etiketiyle taramaya giriyor; mesajda da o başlık altında
+    çıkıyorlar.
+    """
     def bilesenler(endeks):
         try:
             return set(bp.Index(endeks).component_symbols)
@@ -183,7 +211,12 @@ def evreni_kur():
     for kod in yat_ort - tum - yildiz:
         evren[kod] = "Yatırım Ortaklıkları"
 
-    log(f"Evren: {len(evren)} hisse (Yıldız {len(yildiz)})")
+    endeksli = len(evren)
+    for kod in tum_sirketler():
+        evren.setdefault(kod, "Diğer")          # endekste yoksa etiketsiz kalsın
+
+    log(f"Evren: {len(evren)} hisse "
+        f"(Yıldız {len(yildiz)}, endeks dışı {len(evren) - endeksli})")
     return evren
 
 

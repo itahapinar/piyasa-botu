@@ -104,7 +104,7 @@ Ons altın bir istisna: `borsapy`'nin `ons-altin` serisi canlidoviz'in `METAL_ID
 
 **Hisseler.**
 
-1. `XYLDZ`, `XUTUM` ve `XYORT` endeks bileşenlerinden evren kuruluyor; her hisse Yıldız Pazar / Ana-Alt Pazar / Yatırım Ortaklıkları olarak etiketleniyor.
+1. `XYLDZ`, `XUTUM` ve `XYORT` endeks bileşenlerinden pazar etiketleri çıkarılıyor (Yıldız Pazar / Ana-Alt Pazar / Yatırım Ortaklıkları), ardından tarama evreni `bp.companies()` ile BIST'in tamamına genişletiliyor. Endekslerde yer almayan hisseler **Diğer** başlığı altında listeleniyor — sadece endeks bileşenlerine bakmak, endekslere henüz girmemiş yeni şirketleri ve Yakın İzleme Pazarı'ndakileri kaçırıyordu.
 2. `bp.scan(...)` ile eşiği aşanlar **tek istekte** bulunuyor (filtreleme TradingView sunucusunda yapılıyor).
 3. Adaylar gerçek kapanış verisiyle tek tek doğrulanıyor, haftalık değişim de burada çıkarılıyor.
 4. Sonuçlar pazara göre gruplanıp günlük değişime göre sıralanıyor.
