@@ -209,6 +209,10 @@ def evreni_kur():
     # Katılım finans ilkelerine uygunluğu bulunan şirketler. Liste dönemsel
     # güncelleniyor; her çalıştırmada taze çektiğimiz için elle bakım gerekmiyor.
     katilim = bilesenler("XKTUM")
+    if not katilim:
+        # bp.Index() bilinmeyen endeks koduna istisna atmıyor, boş liste dönüyor.
+        # BIST kodu değiştirirse fark etmeden bütün ☪️ işaretlerini kaybederiz.
+        log("  XKTUM boş döndü - katılım işaretleri bu çalıştırmada yok.")
     if not tum and not yildiz:
         raise RuntimeError("Hiçbir endeks bileşeni alınamadı.")
 
@@ -334,6 +338,10 @@ def hisse_satirlari(esik):
 
     if katilim:
         satirlar.append("\n<i>☪️ = BIST Katılım Tüm (XKTUM) kapsamında</i>")
+    else:
+        # İşaretsiz liste "bugün hiçbiri katılıma uygun değil" diye okunmasın
+        satirlar.append("\n<i>⚠️ Katılım listesi (XKTUM) alınamadı; "
+                        "bu mesajda ☪️ işaretleri yok.</i>")
     if not_:
         satirlar.append(not_)
     return tarih, satirlar
