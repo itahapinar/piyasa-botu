@@ -1,9 +1,9 @@
 # Sabah Piyasa Botu
 
-Her sabah Telegram'a tek bir mesaj gönderen küçük bir bot. Mesajda iki şey var:
+Her sabah Telegram'a tek bir mesaj gönderen küçük bir bot. Mesajda iki bölüm var:
 
 1. **Değerli metaller** — gram/ons altın ve gram/ons gümüşün son fiyatı ve 1 haftalık % değişimi
-2. **Yükselenler** — Borsa İstanbul'da belirlenen eşiğin üzerinde kapatan hisseler, pazarına göre gruplanmış
+2. **Yükselenler** — Borsa İstanbul'da belirlenen eşiğin üzerinde kapatan hisseler, pazarına göre gruplanmış ve BIST Katılım Tüm (XKTUM) kapsamındakiler ☪️ ile işaretlenmiş
 
 Sunucuya ihtiyaç yok: GitHub Actions her gün 09:00 TSİ'de çalıştırıyor.
 
@@ -21,11 +21,16 @@ Sunucuya ihtiyaç yok: GitHub Actions her gün 09:00 TSİ'de çalıştırıyor.
 🚀 %9+ kapatanlar (21.08.2026)
 
 — Yıldız Pazar (2)
-• ABCDE:  14,72 TL  +9,84%  (1H: +12,3%)
+• ABCDE:  14,72 TL  +9,84%  (1H: +12,3%) ☪️
 • FGHIJ:  8,05 TL  +9,21%  (1H: ~+9,2%)
 
 — Ana / Alt Pazar (1)
-• KLMNO:  3,41 TL  +9,97%  (1H: +18,5%)
+• KLMNO:  3,41 TL  +9,97%  (1H: +18,5%) ☪️
+
+— Diğer (1)
+• PQRST:  306,75 TL  +9,55%  (1H: -2,9%)
+
+☪️ = BIST Katılım Tüm (XKTUM) kapsamında
 
 ~ = 7 günlük geçmiş yok; en eski kayda göre hesaplandı.
 ```
@@ -98,22 +103,34 @@ GitHub'ın tam saatleri (`:00`) yoğun olduğu için gecikme büyüyebilir; daki
 
 Veriler [`borsapy`](https://pypi.org/project/borsapy/) üzerinden alınıyor.
 
-**Metaller.** Her sembolün 1 aylık kapanış serisi çekiliyor, son fiyat ile 7 gün öncesinin (ya da ondan eski en yakın kaydın — tatile denk gelebilir) farkı yüzde olarak hesaplanıyor. 7 günlük geçmiş yoksa en eski kayda göre hesaplanıp `~` ile işaretleniyor.
+### Metaller
+
+Her sembolün 1 aylık kapanış serisi çekiliyor, son fiyat ile 7 gün öncesinin (ya da ondan eski en yakın kaydın — tatile denk gelebilir) farkı yüzde olarak hesaplanıyor. 7 günlük geçmiş yoksa en eski kayda göre hesaplanıp `~` ile işaretleniyor.
 
 Ons altın bir istisna: `borsapy`'nin `ons-altin` serisi canlidoviz'in `METAL_IDS` listesinden geliyor ve TL cinsinden fiyat veriyor, dolar diye göstermek ~25 kat hatalı sonuç üretiyordu. Bu yüzden ons altın doğrudan TradingView'daki `OANDA:XAUUSD`'den çekiliyor. Ons gümüş (`XAG-USD`) `COMMODITY_IDS`'ten geldiği için zaten gerçek USD.
 
-**Hisseler.**
+### Hisseler
 
 1. `XYLDZ`, `XUTUM` ve `XYORT` endeks bileşenlerinden pazar etiketleri çıkarılıyor (Yıldız Pazar / Ana-Alt Pazar / Yatırım Ortaklıkları), ardından tarama evreni `bp.companies()` ile BIST'in tamamına genişletiliyor. Endekslerde yer almayan hisseler **Diğer** başlığı altında listeleniyor — sadece endeks bileşenlerine bakmak, endekslere henüz girmemiş yeni şirketleri ve Yakın İzleme Pazarı'ndakileri kaçırıyordu.
 2. `bp.scan(...)` ile eşiği aşanlar **tek istekte** bulunuyor (filtreleme TradingView sunucusunda yapılıyor).
 3. Adaylar gerçek kapanış verisiyle tek tek doğrulanıyor, haftalık değişim de burada çıkarılıyor.
 4. Sonuçlar pazara göre gruplanıp günlük değişime göre sıralanıyor.
 
-Dayanıklılık için birkaç detay:
+### Katılım işareti (☪️)
+
+`XKTUM` (BIST Katılım Tüm) bileşenleri her çalıştırmada taze çekiliyor, listedeki hisselere ☪️ konuyor. Elle bakım gerekmiyor: `borsapy` bu veriyi Borsa İstanbul'un kendi yayınladığı bileşen dosyasından (`borsaistanbul.com/datum/hisse_endeks_ds.csv`) alıyor, dolayısıyla kaynak resmî ve dönemsel endeks revizyonlarını kendiliğinden takip ediyor.
+
+**Ne anlama gelmediğine dikkat.** ☪️ yokluğu "katılım finans ilkelerine uygun değil" demek değil, sadece "XKTUM'da değil" demek. XKTUM yalnızca Yıldız, Ana ve Alt Pazar'daki uygun payları kapsıyor; bu yüzden mesajdaki **Diğer** grubundaki hisseler (henüz endekse girmemiş yeni şirketler, Yakın İzleme Pazarı'ndakiler) uygun olsalar bile hiçbir zaman ☪️ alamaz. Kesin karar için şirketin KAP'taki Katılım Finans İlkeleri Bilgi Formu'na bakmak gerekir.
+
+Liste hiç gelmezse mesaj sessizce işaretsiz gitmiyor; dipnotun yerine açık bir uyarı satırı konuyor, yoksa işaretsiz liste "bugün hiçbiri uygun değil" diye okunurdu.
+
+### Dayanıklılık
 
 - Tarama boş dönerse `change_percent > 0.5` ile sağlama yapılıyor — "kimse yükselmedi" ile "veri hiç gelmedi" ayırt ediliyor, ikincisinde mesaja uyarı düşülüyor.
 - Aday sayısı 100'ü aşarsa (`MAX_DOGRULAMA`) tek tek doğrulama atlanıyor, sadece kodlar listeleniyor.
 - Bir metal kaynağı çökerse o satır `⚠️ veri alınamadı` olup mesajın geri kalanı yine gidiyor.
+- Katılım listesi alınamazsa ☪️ işaretleri düşüyor ama mesaja bunu söyleyen bir uyarı ekleniyor.
+- Endeks bileşenlerinin **hiçbiri** alınamazsa iş hataya düşürülüyor; yarım evrenle yanıltıcı liste üretilmiyor.
 - Telegram'ın 4096 karakter sınırına takılmamak için uzun listeler 4000 karakterde kırpılıyor.
 
 ## Dosyalar
