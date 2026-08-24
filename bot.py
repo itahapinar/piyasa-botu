@@ -2,9 +2,9 @@
 Sabah Piyasa Botu
 =================
 Her sabah Telegram'a gönderir:
-  1. Gram/ons altın, gram/ons gümüş -> son fiyat + 1 haftalık % değişim
-  2. Borsa genelinde eşiği aşarak kapatan hisseler, pazarına göre gruplanmış
-     ve BIST Katılım Tüm (XKTUM) kapsamında olanlar işaretlenmiş
+  1. Gram/ons altın, gram/ons gümüş -> son kapanış + 1 haftalık % değişim
+  2. Son *kapanmış* seansta eşiği aşarak kapatan hisseler, pazarına göre
+     gruplanmış ve BIST Katılım Tüm (XKTUM) kapsamında olanlar işaretlenmiş
 
 Ortam değişkenleri:
   TELEGRAM_BOT_TOKEN   (zorunlu)
@@ -47,12 +47,14 @@ if not DRY_RUN and (not TOKEN or not CHAT_ID):
 TR = timezone(timedelta(hours=3))   # Türkiye UTC+3, yaz saati uygulaması yok
 MAX_DOGRULAMA = 100                 # aday sayısı bunu aşarsa tek tek doğrulama atlanır
 
-METALLER = [
-    ("gram-altin", "Gram Altın", "TL"),
-    ("ons-altin", "Ons Altın", "$"),
-    ("gram-gumus", "Gram Gümüş", "TL"),
-    ("XAG-USD", "Ons Gümüş", "$"),
-]
+# Günlük barın "kapandı" sayılacağı TSİ saati. BIST'te kapanış seansı 18:10'da
+# biter, 19 güvenli bir sınır. Döviz/emtia günü gece yarısı kapandığı için 24:
+# bugüne ait forex barı gün boyunca hep "devam ediyor" sayılır.
+BIST_KAPANIS_SAATI = 19
+FX_KAPANIS_SAATI = 24
+
+ONS_GRAM = 31.1034768               # 1 troy ons = 31,1035 gram
+REFERANS_HISSELER = ("GARAN", "THYAO", "AKBNK")   # seans tarihini okuduğumuz likit kodlar
 
 # ---------------------------------------------------------------- yardımcı
 
@@ -68,6 +70,16 @@ def tr_sayi(x, ondalik=2):
     return s.replace(",", "#").replace(".", ",").replace("#", ".")
 
 
+def tr_fiyat(x):
+    """Metal fiyatı: büyük değerlerde tam sayı, küçüklerde iki ondalık.
+
+    Hepsi 0 ondalıkla yazılıyordu; ons gümüş "69 $", gram gümüş "107 TL"
+    çıkıyor ve günlük hareketin tamamı yuvarlamada kayboluyordu - fiyat
+    donmuş gibi görünüyordu.
+    """
+    return tr_sayi(x, 0 if abs(x) >= 1000 else 2)
+
+
 def tr_yuzde(x, ondalik=2):
     """9.99 -> '+9,99'   (işaret her zaman görünür, ondalık virgülle)"""
     return f"{x:+.{ondalik}f}".replace(".", ",")
@@ -79,6 +91,66 @@ def _sutun_bul(df, adaylar):
         if ad in df.columns:
             return ad
     return None
+
+
+# ------------------------------------------------------- seans / tarih ekseni
+
+
+def gunluk_seri(seri: pd.Series) -> pd.Series:
+    """Kapanış serisini tz'siz, gün başlangıcına yuvarlanmış indekse çeker.
+
+    TradingView tz bilgisi olan indeks döndürüyor ve barın saati sembole göre
+    değişiyor (BIST barları 09:00+03:00, forex barları 00:00+03:00).
+    Karşılaştırmaların gün bazında yapılabilmesi için hepsini aynı eksene
+    getiriyoruz.
+    """
+    seri = seri.dropna()
+    if seri.index.tz is not None:
+        seri.index = seri.index.tz_convert(TR).tz_localize(None)
+    seri.index = seri.index.normalize()
+    return seri
+
+
+def kapanmis(seri: pd.Series, kapanis_saati: int) -> pd.Series:
+    """Devam eden seansın barını atar; geriye sadece kapanmış günler kalır.
+
+    TradingView'in günlük barı seans açılır açılmaz oluşuyor ve gün boyunca
+    canlı güncelleniyor. Yani seri.iloc[-1] "dünkü kapanış" değil, "şu anki
+    fiyat" olabiliyor.
+
+    Botun tamamı bu varsayımın üstünde duruyordu ve sadece çalışma saati
+    sayesinde doğru sonuç veriyordu: 09:00'da BIST henüz açılmadığı için son
+    bar gerçekten dünkü kapanıştı. 24.08.2026'da GitHub Actions gecikip iş
+    10:12'de çalışınca bugünün barı çoktan oluşmuştu ve mesaja dünkü
+    kapanışlar yerine o andaki tavanlar girdi.
+    """
+    if not len(seri):
+        return seri
+    simdi = datetime.now(TR)
+    bugun = pd.Timestamp(simdi.date())
+    if seri.index[-1] == bugun and simdi.hour < kapanis_saati:
+        return seri.iloc[:-1]
+    return seri
+
+
+def bist_seansi():
+    """(hedef_tarih, seans_acik) döndürür.
+
+    hedef_tarih : raporlanacak son kapanmış seansın günü
+    seans_acik  : True ise bugünün seansı devam ediyor. Bu durumda
+                  bp.scan()'in 'change' alanı kapanış değil anlık değişim
+                  demektir; aday listesi güvenilir değildir.
+    """
+    for kod in REFERANS_HISSELER:
+        try:
+            ham = gunluk_seri(bp.Ticker(kod).history(period="1mo")["Close"])
+            kapali = kapanmis(ham, BIST_KAPANIS_SAATI)
+            if len(kapali) < 2:
+                continue
+            return kapali.index[-1], len(kapali) < len(ham)
+        except Exception as e:
+            log(f"  {kod} referans alınamadı: {type(e).__name__}")
+    raise RuntimeError("Seans tarihi belirlenemedi (referans hisseler okunamadı).")
 
 
 # ---------------------------------------------------------------- metaller
@@ -107,57 +179,79 @@ def haftalik_degisim(seri: pd.Series):
     return son, (son - onceki) / onceki * 100, tam
 
 
-def metal_serisi(sembol):
-    """Metalin kapanış serisini döndürür.
+def _tv_serisi(sembol, borsa):
+    """TradingView'den günlük kapanış serisi; devam eden gün atılmış."""
+    df = bp.FX("ons-altin")._tradingview.get_history(
+        symbol=sembol, exchange=borsa, period="1mo", interval="1d"
+    )
+    return kapanmis(gunluk_seri(df["Close"]), FX_KAPANIS_SAATI)
 
-    borsapy'nin günlük "ons-altin" serisi canlidoviz'in METAL_IDS listesinden
-    geliyor; o liste TL cinsinden fiyat veriyor (ve altınla da tutmuyor:
-    ~114.000, oysa ons altın TL karşılığı ~221.000). "$" diye göstermek
-    yaklaşık 25 kat hatalı sonuç üretiyordu. Ons gümüş (XAG-USD) ise
-    COMMODITY_IDS'ten geldiği için gerçekten USD; o yüzden gümüş doğruydu.
 
-    borsapy'de USD ons altın için emtia ID'si yok. Doğru kaynak TradingView'daki
-    OANDA:XAUUSD - history() bunu sadece saatlik/dakikalık isteklerde kullanıyor,
-    biz günlük için doğrudan çağırıyoruz.
+def _tv_serisi_guvenli(sembol, borsa):
+    """Tek kaynak çökerse mesajın tamamı gitmesin diye None dönüyoruz."""
+    try:
+        return _tv_serisi(sembol, borsa)
+    except Exception as e:
+        log(f"  {borsa}:{sembol} alınamadı: {type(e).__name__}")
+        return None
+
+
+def metal_serileri():
+    """[(ad, birim, kapanış_serisi), ...] - dördü de tek kaynaktan.
+
+    Eskiden ons altın TradingView'den, diğer üçü borsapy'nin FX geçmişinden
+    (canlidoviz) geliyordu. canlidoviz'in günlük serisi hafta sonu için de bar
+    üretiyor ve bir işlem günü geriden geliyor: 24.08.2026 akşamı gram altının
+    son kaydı hâlâ 22.08 (cumartesi), ons gümüşünki 21.08'di. Yani üç satır
+    donuk dururken ons altın canlı fiyatla oynuyordu - üstelik başlıktaki tarih
+    serilerin en yenisine göre yazıldığı için mesaj "24.08 kapanışı" diyordu.
+
+    Şimdi dördü de OANDA spot kapanışlarından geliyor, gram fiyatlar
+    ons x USDTRY / 31,1035 ile türetiliyor: aynı kaynak, aynı gün, aynı gecikme.
+    Kapalıçarşı'nın gram altınında ~%0,2 yerel prim var, o yüzden banka
+    kotasyonundan bir tık düşük çıkabilir; yön ve yüzde değişim aynı.
     """
-    fx = bp.FX(sembol)
-    if sembol == "ons-altin":
-        df = fx._tradingview.get_history(
-            symbol="XAUUSD", exchange="OANDA", period="1mo", interval="1d"
-        )
-    else:
-        df = fx.history(period="1mo")
+    xau = _tv_serisi_guvenli("XAUUSD", "OANDA")
+    xag = _tv_serisi_guvenli("XAGUSD", "OANDA")
+    usd = _tv_serisi_guvenli("USDTRY", "FX")
 
-    seri = df["Close"].dropna()
-    # TradingView tz bilgisi olan indeks döndürüyor, diğer kaynaklar tz'siz.
-    # Karıştırınca tarih karşılaştırması patlıyor; TR saatine çevirip düşürüyoruz.
-    if seri.index.tz is not None:
-        seri.index = seri.index.tz_convert(TR).tz_localize(None)
-    return seri
+    def gram(ons):
+        if ons is None or usd is None:
+            return None
+        ortak = ons.index.intersection(usd.index)
+        return (ons[ortak] * usd[ortak] / ONS_GRAM) if len(ortak) else None
+
+    return [
+        ("Gram Altın", "TL", gram(xau)),
+        ("Ons Altın", "$", xau),
+        ("Gram Gümüş", "TL", gram(xag)),
+        ("Ons Gümüş", "$", xag),
+    ]
 
 
 def metal_satirlari():
     """(veri_tarihi, satır_listesi) döndürür."""
     satirlar, tarihler = [], []
-    for sembol, ad, birim in METALLER:
-        try:
-            seri = metal_serisi(sembol)
+    for ad, birim, seri in metal_serileri():
+        son, degisim, tam = (None, None, False)
+        if seri is not None:
             son, degisim, tam = haftalik_degisim(seri)
-            if son is None:
-                raise ValueError("yeterli veri yok")
 
-            tarihler.append(seri.index[-1])   # verinin gerçekten ait olduğu gün
-            ok = "🟢" if degisim >= 0 else "🔴"
-            isaret = "" if tam else "~"       # tam hafta yoksa yaklaşık olduğunu belirt
-            satirlar.append(
-                f"{ok} <b>{ad}:</b> {tr_sayi(son, 0)} {birim}  "
-                f"<i>(1H: {isaret}{tr_yuzde(degisim)}%)</i>"
-            )
-        except Exception as e:
-            # Tek kaynak çökerse mesajın tamamı gitmesin
-            satirlar.append(f"⚠️ <b>{ad}:</b> veri alınamadı ({type(e).__name__})")
+        if son is None:
+            satirlar.append(f"⚠️ <b>{ad}:</b> veri alınamadı")
+            continue
 
-    return (max(tarihler) if tarihler else None), satirlar
+        tarihler.append(seri.index[-1])   # verinin gerçekten ait olduğu gün
+        ok = "🟢" if degisim >= 0 else "🔴"
+        isaret = "" if tam else "~"       # tam hafta yoksa yaklaşık olduğunu belirt
+        satirlar.append(
+            f"{ok} <b>{ad}:</b> {tr_fiyat(son)} {birim}  "
+            f"<i>(1H: {isaret}{tr_yuzde(degisim)}%)</i>"
+        )
+
+    # Hepsi aynı kaynaktan geldiği için tarihler de aynı; yine de en eskisini
+    # yazıyoruz ki başlık hiçbir satırdan daha taze görünmesin.
+    return (min(tarihler) if tarihler else None), satirlar
 
 
 # ---------------------------------------------------------------- hisseler
@@ -239,7 +333,13 @@ class VeriYok(Exception):
 
 
 def adaylari_bul(evren, esik):
-    """Eşiği aşanları tek istekte bulur (filtreleme TradingView sunucusunda)."""
+    """Eşiği aşanları tek istekte bulur (filtreleme TradingView sunucusunda).
+
+    DİKKAT: TradingView'in 'change' alanı içinde bulunulan seansın değişimidir.
+    Seans kapalıyken bu, son kapanışın değişimine eşittir - istediğimiz budur.
+    Seans açıkken ise anlık değişimdir; o yüzden çağıran taraf bist_seansi()
+    ile durumu kontrol ediyor ve sonuçları dogrula() ile hedef güne sabitliyor.
+    """
     kodlar = list(evren.keys())
     df = bp.scan(kodlar, f"change_percent > {esik}", limit=300)
 
@@ -257,25 +357,34 @@ def adaylari_bul(evren, esik):
     return [str(k).upper() for k in df[kod_sutunu].tolist()]
 
 
-def dogrula(kodlar, esik):
-    """Adayları gerçek kapanış verisiyle teyit eder, haftalık değişimi de çıkarır."""
+def dogrula(kodlar, esik, hedef):
+    """Adayları hedef seansın kapanışıyla teyit eder, haftalık değişimi de çıkarır.
+
+    Kritik nokta: seri konumla değil TARİHLE okunuyor. Bot seans açıkken
+    çalıştığında geçmişin son barı bugünün devam eden seansı oluyor;
+    iloc[-1]/iloc[-2] o zaman kapanışı değil anlık değişimi hesaplıyordu.
+    Seriyi hedef güne kırpınca hesap günün her saatinde aynı sonucu veriyor.
+    """
     sonuc = []
     for kod in kodlar:
         try:
             # 5d yerine 1mo: aynı istek sayısı, ama haftalık hesap için yeterli geçmiş
-            kapanis = bp.Ticker(kod).history(period="1mo")["Close"].dropna()
-            if len(kapanis) < 2:
+            seri = gunluk_seri(bp.Ticker(kod).history(period="1mo")["Close"])
+            seri = seri[seri.index <= hedef]
+            # Son bar hedef gün değilse hisse o seansta işlem görmemiş
+            # (sıra bekliyor, tedbir var, yeni halka arz vs.) - listeye almıyoruz.
+            if len(seri) < 2 or seri.index[-1] != hedef:
                 continue
 
-            son, onceki = float(kapanis.iloc[-1]), float(kapanis.iloc[-2])
+            son, onceki = float(seri.iloc[-1]), float(seri.iloc[-2])
             gunluk = (son - onceki) / onceki * 100
             if gunluk < esik:
                 continue
 
             # Metaller için yazdığımız fonksiyonu aynen kullanıyoruz
-            _, haftalik, tam = haftalik_degisim(kapanis)
+            _, haftalik, tam = haftalik_degisim(seri)
 
-            sonuc.append((kod, son, gunluk, haftalik, tam, kapanis.index[-1]))
+            sonuc.append((kod, son, gunluk, haftalik, tam))
         except Exception as e:
             log(f"  {kod} doğrulanamadı: {type(e).__name__}")
     return sonuc
@@ -283,36 +392,52 @@ def dogrula(kodlar, esik):
 
 def hisse_satirlari(esik):
     """(tarih, satır_listesi) döndürür."""
+    hedef, seans_acik = bist_seansi()
+    log(f"Hedef seans: {hedef.date()} (seans açık: {seans_acik})")
+
     evren, katilim = evreni_kur()
     try:
         adaylar = adaylari_bul(evren, esik)
     except VeriYok as e:
         log(f"Veri yok: {e}")
-        return None, ["⚠️ <i>Seans verisi alınamadı. Piyasa kapalı olabilir "
-                      "ya da veri kaynağı henüz hazır değil.</i>"]
+        return hedef, ["⚠️ <i>Seans verisi alınamadı. Piyasa kapalı olabilir "
+                       "ya da veri kaynağı henüz hazır değil.</i>"]
     log(f"Aday: {len(adaylar)}")
 
+    uyarilar = []
+    if seans_acik:
+        # Aday listesi bugünün anlık hareketinden geliyor: dün tavan yapıp bugün
+        # düşen bir hisse taramaya hiç girmiyor. Rakamlar doğru ama liste eksik
+        # olabilir - bunu saklamıyoruz.
+        uyarilar.append(
+            "\n<i>⚠️ Bu çalıştırma seans açıkken yapıldı. Rakamlar "
+            f"{hedef.strftime('%d.%m.%Y')} kapanışına ait ama liste eksik "
+            "kalmış olabilir.</i>"
+        )
+
     if not adaylar:
-        return None, ["<i>Eşiği aşan hisse yok.</i>"]
+        return hedef, ["<i>Eşiği aşan hisse yok.</i>"] + uyarilar
 
     if len(adaylar) <= MAX_DOGRULAMA:
-        kayitlar, not_ = dogrula(adaylar, esik), ""
+        kayitlar, not_ = dogrula(adaylar, esik, hedef), ""
+    elif seans_acik:
+        # Doğrulamayı atlarsak elimizde sadece anlık veri kalır; onu "kapanış"
+        # diye yazmaktansa hiç yazmamak daha doğru.
+        return hedef, ["⚠️ <i>Aday sayısı yüksek ve seans açık; kapanış "
+                       "doğrulaması yapılamadığı için liste atlandı.</i>"]
     else:
         nan = float("nan")
-        kayitlar = [(k, nan, nan, nan, False, None) for k in adaylar]
+        kayitlar = [(k, nan, nan, nan, False) for k in adaylar]
         not_ = "\n<i>(Aday sayısı yüksek, kapanış doğrulaması atlandı.)</i>"
 
     if not kayitlar:
-        return None, ["<i>Eşiği aşan hisse yok.</i>"]
+        return hedef, ["<i>Eşiği aşan hisse yok.</i>"] + uyarilar
 
     gruplar = {"Yıldız Pazar": [], "Ana / Alt Pazar": [], "Yatırım Ortaklıkları": []}
-    for kod, fiyat, gunluk, haftalik, tam, _ in kayitlar:
+    for kod, fiyat, gunluk, haftalik, tam in kayitlar:
         gruplar.setdefault(evren.get(kod, "Diğer"), []).append(
             (kod, fiyat, gunluk, haftalik, tam)
         )
-
-    tarihler = [t for *_, t in kayitlar if t is not None]
-    tarih = max(tarihler) if tarihler else None
 
     satirlar = []
     for pazar, liste in gruplar.items():
@@ -344,7 +469,7 @@ def hisse_satirlari(esik):
                         "bu mesajda ☪️ işaretleri yok.</i>")
     if not_:
         satirlar.append(not_)
-    return tarih, satirlar
+    return hedef, satirlar + uyarilar
 
 
 # ---------------------------------------------------------------- mesaj

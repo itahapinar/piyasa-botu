@@ -2,10 +2,12 @@
 
 Her sabah Telegram'a tek bir mesaj gönderen küçük bir bot. Mesajda iki bölüm var:
 
-1. **Değerli metaller** — gram/ons altın ve gram/ons gümüşün son fiyatı ve 1 haftalık % değişimi
+1. **Değerli metaller** — gram/ons altın ve gram/ons gümüşün son kapanışı ve 1 haftalık % değişimi
 2. **Yükselenler** — Borsa İstanbul'da belirlenen eşiğin üzerinde kapatan hisseler, pazarına göre gruplanmış ve BIST Katılım Tüm (XKTUM) kapsamındakiler ☪️ ile işaretlenmiş
 
-Sunucuya ihtiyaç yok: GitHub Actions her gün 09:00 TSİ'de çalıştırıyor.
+Her iki bölüm de **son kapanmış seansa** ait; bot saat kaçta çalışırsa çalışsın rakamlar değişmez.
+
+Sunucuya ihtiyaç yok: GitHub Actions her gün 08:50 TSİ'de çalıştırıyor.
 
 ## Örnek mesaj
 
@@ -15,8 +17,8 @@ Sunucuya ihtiyaç yok: GitHub Actions her gün 09:00 TSİ'de çalıştırıyor.
 💰 Değerli Metaller (21.08.2026 kapanışı)
 🟢 Gram Altın: 4.312 TL  (1H: +1,84%)
 🟢 Ons Altın: 3.421 $  (1H: +0,92%)
-🔴 Gram Gümüş: 49 TL  (1H: -2,10%)
-🔴 Ons Gümüş: 38 $  (1H: -2,74%)
+🔴 Gram Gümüş: 49,17 TL  (1H: -2,10%)
+🔴 Ons Gümüş: 38,04 $  (1H: -2,74%)
 
 🚀 %9+ kapatanlar (21.08.2026)
 
@@ -74,6 +76,8 @@ python bot.py
 
 Windows PowerShell'de `export` yerine `$env:TELEGRAM_BOT_TOKEN = "..."`.
 
+Windows konsolu varsayılan olarak cp1252 kullanıyor; `--dry` çıktısındaki emojiler `UnicodeEncodeError` verirse önce `$env:PYTHONIOENCODING = "utf-8"` deyin. Telegram'a gönderim bundan etkilenmiyor, sorun sadece ekrana yazarken çıkıyor.
+
 ## Ayarlar
 
 Hepsi ortam değişkeni:
@@ -93,28 +97,53 @@ Hepsi ortam değişkeni:
 `.github/workflows/daily.yml` içindeki cron **UTC**'dir, Türkiye UTC+3:
 
 ```yaml
-- cron: "0 6 * * *"   # 09:00 TSİ, her gün
-- cron: "0 6 * * 1-5" # 09:00 TSİ, sadece hafta içi
+- cron: "50 5 * * *"   # 08:50 TSİ, her gün
+- cron: "50 5 * * 1-5" # 08:50 TSİ, sadece hafta içi
 ```
 
-GitHub'ın tam saatleri (`:00`) yoğun olduğu için gecikme büyüyebilir; dakikayı kaydırmak (`"7 6 * * *"`) daha isabetli sonuç verir.
+08:50'de BIST kapalı (açılış seansı 09:40, ilk işlem ~10:00), o yüzden tarama dünkü kapanışı görüyor ve liste tam geliyor.
+
+Dakikanın `:50` olması tesadüf değil: GitHub zamanlanmış işleri kuyruğa alıyor ve tam saatler (`:00`) en yoğun slot. 24.08.2026'da `"0 6 * * *"` ayarıyla iş 10:12'de çalıştı. `:50` hem o yığılmadan kaçıyor hem ilk işleme ~70 dakika pay bırakıyor.
+
+Yine de gecikirse felaket değil: rakamlar dünkü kapanışa sabitlenir (aşağıdaki *Hedef seans*), sadece aday listesi eksik kalabilir ve mesaja uyarı düşer.
 
 ## Nasıl çalışıyor
 
 Veriler [`borsapy`](https://pypi.org/project/borsapy/) üzerinden alınıyor.
 
+### Hedef seans
+
+Botun tek bir çıpası var: **son kapanmış seans**. Bütün rakamlar o güne sabitleniyor.
+
+Bu gerekli, çünkü TradingView'in günlük barı seans açılır açılmaz oluşuyor ve gün boyunca canlı güncelleniyor — `Close` sütununun son satırı "dünkü kapanış" değil, "şu anki fiyat" olabiliyor. `kapanmis()` bu yüzden devam eden günün barını atıyor; `bist_seansi()` de geriye kalan son günü hedef ilan ediyor. Kıyaslamalar konumla (`iloc[-1]`) değil tarihle yapıldığı için sonuç, botun saat kaçta çalıştığından bağımsız.
+
+> Bu davranış eskiden çalışma saatine bağlıydı: 09:00'da BIST kapalı olduğu için son bar gerçekten dünkü kapanıştı. 24.08.2026'da GitHub Actions gecikip iş 10:12'de çalışınca mesaja dünkü kapanışlar yerine o andaki tavanlar girdi (TKNKA 21.08'i +%9,90 ile kapattığı hâlde listede 24.08'in anlık +%9,98'iyle göründü).
+
 ### Metaller
 
-Her sembolün 1 aylık kapanış serisi çekiliyor, son fiyat ile 7 gün öncesinin (ya da ondan eski en yakın kaydın — tatile denk gelebilir) farkı yüzde olarak hesaplanıyor. 7 günlük geçmiş yoksa en eski kayda göre hesaplanıp `~` ile işaretleniyor.
+Dördü de tek kaynaktan, TradingView spot fiyatlarından geliyor:
 
-Ons altın bir istisna: `borsapy`'nin `ons-altin` serisi canlidoviz'in `METAL_IDS` listesinden geliyor ve TL cinsinden fiyat veriyor, dolar diye göstermek ~25 kat hatalı sonuç üretiyordu. Bu yüzden ons altın doğrudan TradingView'daki `OANDA:XAUUSD`'den çekiliyor. Ons gümüş (`XAG-USD`) `COMMODITY_IDS`'ten geldiği için zaten gerçek USD.
+| Satır | Kaynak |
+|---|---|
+| Ons Altın | `OANDA:XAUUSD` |
+| Ons Gümüş | `OANDA:XAGUSD` |
+| Gram Altın | `XAUUSD × FX:USDTRY ÷ 31,1035` |
+| Gram Gümüş | `XAGUSD × FX:USDTRY ÷ 31,1035` |
+
+1 aylık kapanış serisi çekiliyor, son kapanış ile 7 gün öncesinin (ya da ondan eski en yakın kaydın — tatile denk gelebilir) farkı yüzde olarak hesaplanıyor. 7 günlük geçmiş yoksa en eski kayda göre hesaplanıp `~` ile işaretleniyor.
+
+Önceden sadece ons altın TradingView'den geliyordu, diğer üçü `borsapy`'nin FX geçmişinden (canlidoviz). O kaynak hafta sonu için de bar üretiyor ve bir işlem günü geriden geliyor: 24.08.2026 akşamı gram altının son kaydı hâlâ 22.08 (cumartesi), ons gümüşünki 21.08'di. Yani üç satır donuk dururken ons altın canlı fiyatla oynuyordu — üstelik başlıktaki tarih serilerin **en yenisine** göre yazıldığı için mesaj "24.08 kapanışı" diyordu.
+
+Tek kaynağın bedeli: türetilen gram fiyatlar Kapalıçarşı'nın yaklaşık %0,2'lik yerel priminden yoksun, dolayısıyla banka kotasyonundan bir tık düşük çıkabiliyor. Yön ve yüzde değişim aynı.
 
 ### Hisseler
 
 1. `XYLDZ`, `XUTUM` ve `XYORT` endeks bileşenlerinden pazar etiketleri çıkarılıyor (Yıldız Pazar / Ana-Alt Pazar / Yatırım Ortaklıkları), ardından tarama evreni `bp.companies()` ile BIST'in tamamına genişletiliyor. Endekslerde yer almayan hisseler **Diğer** başlığı altında listeleniyor — sadece endeks bileşenlerine bakmak, endekslere henüz girmemiş yeni şirketleri ve Yakın İzleme Pazarı'ndakileri kaçırıyordu.
 2. `bp.scan(...)` ile eşiği aşanlar **tek istekte** bulunuyor (filtreleme TradingView sunucusunda yapılıyor).
-3. Adaylar gerçek kapanış verisiyle tek tek doğrulanıyor, haftalık değişim de burada çıkarılıyor.
+3. Adaylar **hedef seansın** kapanışıyla tek tek doğrulanıyor, haftalık değişim de burada çıkarılıyor. O gün işlem görmemiş kodlar eleniyor.
 4. Sonuçlar pazara göre gruplanıp günlük değişime göre sıralanıyor.
+
+İkinci adımdaki `change_percent`, TradingView'de **içinde bulunulan seansın** değişimi. Seans kapalıyken bu tam olarak istediğimiz şey. Seans açıkken ise anlık değişim demek; üçüncü adım yanlış adayları eliyor ama dün tavan yapıp bugün düşen bir hisse taramaya hiç giremediği için liste **eksik** kalabiliyor. Bot bunu saklamıyor, mesaja açık bir uyarı satırı koyuyor. Cron'un açılıştan uzak tutulmasının sebebi de bu.
 
 ### Katılım işareti (☪️)
 
@@ -127,8 +156,9 @@ Liste hiç gelmezse mesaj sessizce işaretsiz gitmiyor; dipnotun yerine açık b
 ### Dayanıklılık
 
 - Tarama boş dönerse `change_percent > 0.5` ile sağlama yapılıyor — "kimse yükselmedi" ile "veri hiç gelmedi" ayırt ediliyor, ikincisinde mesaja uyarı düşülüyor.
-- Aday sayısı 100'ü aşarsa (`MAX_DOGRULAMA`) tek tek doğrulama atlanıyor, sadece kodlar listeleniyor.
-- Bir metal kaynağı çökerse o satır `⚠️ veri alınamadı` olup mesajın geri kalanı yine gidiyor.
+- Aday sayısı 100'ü aşarsa (`MAX_DOGRULAMA`) tek tek doğrulama atlanıyor, sadece kodlar listeleniyor. Seans açıkken bu mümkün değil: doğrulama yapılamıyorsa elde sadece anlık veri kalır, onu "kapanış" diye yazmaktansa liste hiç yazılmıyor.
+- Bir metal kaynağı çökerse o satır `⚠️ veri alınamadı` olup mesajın geri kalanı yine gidiyor. USDTRY düşerse sadece gram satırları kayboluyor, ons satırları kalıyor.
+- Seans açıkken çalışılırsa mesaja "liste eksik kalmış olabilir" uyarısı ekleniyor.
 - Katılım listesi alınamazsa ☪️ işaretleri düşüyor ama mesaja bunu söyleyen bir uyarı ekleniyor.
 - Endeks bileşenlerinin **hiçbiri** alınamazsa iş hataya düşürülüyor; yarım evrenle yanıltıcı liste üretilmiyor.
 - Telegram'ın 4096 karakter sınırına takılmamak için uzun listeler 4000 karakterde kırpılıyor.
@@ -137,8 +167,15 @@ Liste hiç gelmezse mesaj sessizce işaretsiz gitmiyor; dipnotun yerine açık b
 
 ```
 bot.py                       tüm mantık (veri çekme, biçimlendirme, gönderme)
+test_seans.py                seans sabitlemesinin testleri (ağ gerekmez)
 requirements.txt             borsapy, pandas, requests
 .github/workflows/daily.yml  günlük cron + elle tetikleme
+```
+
+Testler saati donduruyor, bu yüzden internetsiz de çalışıyor:
+
+```bash
+python test_seans.py
 ```
 
 ## Not

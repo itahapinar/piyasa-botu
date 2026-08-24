@@ -1,0 +1,10 @@
+# Kazara sırrını commit etmemek için
+.env
+*.env
+secrets.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
