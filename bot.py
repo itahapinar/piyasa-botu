@@ -18,7 +18,7 @@ Kullanım:
 
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 import pandas as pd
 import requests
@@ -47,11 +47,12 @@ if not DRY_RUN and (not TOKEN or not CHAT_ID):
 TR = timezone(timedelta(hours=3))   # Türkiye UTC+3, yaz saati uygulaması yok
 MAX_DOGRULAMA = 100                 # aday sayısı bunu aşarsa tek tek doğrulama atlanır
 
-# Günlük barın "kapandı" sayılacağı TSİ saati. BIST'te kapanış seansı 18:10'da
-# biter, 19 güvenli bir sınır. Döviz/emtia günü gece yarısı kapandığı için 24:
-# bugüne ait forex barı gün boyunca hep "devam ediyor" sayılır.
-BIST_KAPANIS_SAATI = 19
-FX_KAPANIS_SAATI = 24
+# Günlük barın "kapandı" sayılacağı TSİ saati.
+#   BIST: kapanış seansı 18:10'da biter, 5 dakika pay bırakıyoruz.
+#   Forex/emtia: gün gece yarısı kapandığı için bugüne ait bar gün boyunca
+#   "devam ediyor" sayılır - None bunu ifade ediyor.
+BIST_KAPANIS = time(18, 15)
+FX_KAPANIS = None
 
 ONS_GRAM = 31.1034768               # 1 troy ons = 31,1035 gram
 REFERANS_HISSELER = ("GARAN", "THYAO", "AKBNK")   # seans tarihini okuduğumuz likit kodlar
@@ -111,8 +112,11 @@ def gunluk_seri(seri: pd.Series) -> pd.Series:
     return seri
 
 
-def kapanmis(seri: pd.Series, kapanis_saati: int) -> pd.Series:
+def kapanmis(seri: pd.Series, kapanis: time | None) -> pd.Series:
     """Devam eden seansın barını atar; geriye sadece kapanmış günler kalır.
+
+    kapanis : o piyasanın günlük barının kesinleştiği TSİ saati. None ise
+              bugüne ait bar hiçbir saatte kapanmış sayılmaz (forex).
 
     TradingView'in günlük barı seans açılır açılmaz oluşuyor ve gün boyunca
     canlı güncelleniyor. Yani seri.iloc[-1] "dünkü kapanış" değil, "şu anki
@@ -128,7 +132,7 @@ def kapanmis(seri: pd.Series, kapanis_saati: int) -> pd.Series:
         return seri
     simdi = datetime.now(TR)
     bugun = pd.Timestamp(simdi.date())
-    if seri.index[-1] == bugun and simdi.hour < kapanis_saati:
+    if seri.index[-1] == bugun and (kapanis is None or simdi.time() < kapanis):
         return seri.iloc[:-1]
     return seri
 
@@ -144,7 +148,7 @@ def bist_seansi():
     for kod in REFERANS_HISSELER:
         try:
             ham = gunluk_seri(bp.Ticker(kod).history(period="1mo")["Close"])
-            kapali = kapanmis(ham, BIST_KAPANIS_SAATI)
+            kapali = kapanmis(ham, BIST_KAPANIS)
             if len(kapali) < 2:
                 continue
             return kapali.index[-1], len(kapali) < len(ham)
@@ -184,7 +188,7 @@ def _tv_serisi(sembol, borsa):
     df = bp.FX("ons-altin")._tradingview.get_history(
         symbol=sembol, exchange=borsa, period="1mo", interval="1d"
     )
-    return kapanmis(gunluk_seri(df["Close"]), FX_KAPANIS_SAATI)
+    return kapanmis(gunluk_seri(df["Close"]), FX_KAPANIS)
 
 
 def _tv_serisi_guvenli(sembol, borsa):

@@ -117,6 +117,15 @@ Botun tek bir çıpası var: **son kapanmış seans**. Bütün rakamlar o güne 
 
 Bu gerekli, çünkü TradingView'in günlük barı seans açılır açılmaz oluşuyor ve gün boyunca canlı güncelleniyor — `Close` sütununun son satırı "dünkü kapanış" değil, "şu anki fiyat" olabiliyor. `kapanmis()` bu yüzden devam eden günün barını atıyor; `bist_seansi()` de geriye kalan son günü hedef ilan ediyor. Kıyaslamalar konumla (`iloc[-1]`) değil tarihle yapıldığı için sonuç, botun saat kaçta çalıştığından bağımsız.
 
+Barın ne zaman "kapandı" sayılacağı piyasaya göre değişiyor:
+
+| | Sınır | Sonuç |
+|---|---|---|
+| BIST | `BIST_KAPANIS = 18:15` | Kapanış seansı 18:10'da bitiyor, 5 dk pay. 18:15'ten önce çalıştırırsanız dünkü kapanışı, sonra çalıştırırsanız bugünkünü alırsınız. |
+| Metaller | `FX_KAPANIS = None` | Forex günü gece yarısı kapandığı için bugüne ait bar gün boyunca "devam ediyor" sayılır; metaller hep bir önceki günün kapanışını gösterir. |
+
+Bu yüzden akşam 18:15 ile gece yarısı arasında çalıştırırsanız hisseler bugünü, metaller dünü gösterir — ikisi de kendi piyasasının son kapanışı olduğu için doğru, ama başlıklardaki tarihler farklı çıkar.
+
 > Bu davranış eskiden çalışma saatine bağlıydı: 09:00'da BIST kapalı olduğu için son bar gerçekten dünkü kapanıştı. 24.08.2026'da GitHub Actions gecikip iş 10:12'de çalışınca mesaja dünkü kapanışlar yerine o andaki tavanlar girdi (TKNKA 21.08'i +%9,90 ile kapattığı hâlde listede 24.08'in anlık +%9,98'iyle göründü).
 
 ### Metaller
