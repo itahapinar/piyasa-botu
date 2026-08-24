@@ -7,14 +7,23 @@ on:
   schedule:
     # DİKKAT: cron her zaman UTC'dir. Türkiye UTC+3 (yaz saati yok).
     # İstediğin TSİ saatinden 3 saat çıkar.
-    #   09:00 TSİ -> 06:00 UTC
+    #   08:50 TSİ -> 05:50 UTC
     # Alanlar: dakika saat ayın_günü ay haftanın_günü
     # Son alan "*" = her gün (hafta sonu dahil).
     # Sadece hafta içi istersen son alanı 1-5 yap.
     #
-    # NOT: GitHub tam saatlerde (:00) çok yoğun olduğu için gecikme büyür.
-    # Daha isabetli zamanlama istersen dakikayı kaydır: "7 6 * * *" gibi.
-    - cron: "0 6 * * *"
+    # 08:50'de BIST kapalı (açılış seansı 09:40, ilk işlem ~10:00), o yüzden
+    # tarama dünkü kapanışı görüyor ve liste tam geliyor.
+    #
+    # NEDEN :50, tam saat değil? GitHub zamanlanmış işleri kuyruğa alıyor ve
+    # tam saatler (:00) en yoğun slot. 24.08.2026'da "0 6" ayarıyla iş 10:12'de
+    # çalıştı - açılıştan sonra. :50 hem o yığılmadan kaçıyor hem ilk işleme
+    # ~70 dakika pay bırakıyor.
+    #
+    # Yine de gecikirse felaket değil: bot.py hedef seansı verinin kendisinden
+    # sabitliyor, rakamlar dünkü kapanışa ait kalıyor. Sadece aday listesi eksik
+    # kalabilir ve mesaja bunu söyleyen bir uyarı düşer.
+    - cron: "50 5 * * *"
 
   # Actions sekmesinden "Run workflow" ile elle tetiklemeni sağlar.
   # Test için şart; bunu koymazsan ertesi sabahı beklemek zorunda kalırsın.
