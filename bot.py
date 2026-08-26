@@ -183,6 +183,26 @@ def haftalik_degisim(seri: pd.Series):
     return son, (son - onceki) / onceki * 100, tam
 
 
+def yukselis_serisi(seri: pd.Series, esik: float) -> int:
+    """Serinin sonundan geriye doğru eşiği aşan ardışık gün sayısı.
+
+    Art arda tavan yapmak tek günlük sıçramadan farklı bir şey anlatıyor, o
+    yüzden mesajda gösteriyoruz.
+
+    Sayım işlem günü bazında: hisse bir gün işlem görmezse o günün barı hiç
+    oluşmadığı için seri kesilmiş sayılmaz. Kaç gün görebildiğimiz elimizdeki
+    geçmişle sınırlı (period="1mo", ~22 işlem günü) ama o kadar uzun bir seri
+    pratikte görülmüyor.
+    """
+    degisimler = (seri.dropna().pct_change().dropna() * 100).tolist()
+    gun = 0
+    for d in reversed(degisimler):
+        if d < esik:
+            break
+        gun += 1
+    return gun
+
+
 def _tv_serisi(sembol, borsa):
     """TradingView'den günlük kapanış serisi; devam eden gün atılmış."""
     df = bp.FX("ons-altin")._tradingview.get_history(
@@ -388,7 +408,8 @@ def dogrula(kodlar, esik, hedef):
             # Metaller için yazdığımız fonksiyonu aynen kullanıyoruz
             _, haftalik, tam = haftalik_degisim(seri)
 
-            sonuc.append((kod, son, gunluk, haftalik, tam))
+            sonuc.append((kod, son, gunluk, haftalik, tam,
+                          yukselis_serisi(seri, esik)))
         except Exception as e:
             log(f"  {kod} doğrulanamadı: {type(e).__name__}")
     return sonuc
@@ -431,17 +452,15 @@ def hisse_satirlari(esik):
                        "doğrulaması yapılamadığı için liste atlandı.</i>"]
     else:
         nan = float("nan")
-        kayitlar = [(k, nan, nan, nan, False) for k in adaylar]
+        kayitlar = [(k, nan, nan, nan, False, 0) for k in adaylar]
         not_ = "\n<i>(Aday sayısı yüksek, kapanış doğrulaması atlandı.)</i>"
 
     if not kayitlar:
         return hedef, ["<i>Eşiği aşan hisse yok.</i>"] + uyarilar
 
     gruplar = {"Yıldız Pazar": [], "Ana / Alt Pazar": [], "Yatırım Ortaklıkları": []}
-    for kod, fiyat, gunluk, haftalik, tam in kayitlar:
-        gruplar.setdefault(evren.get(kod, "Diğer"), []).append(
-            (kod, fiyat, gunluk, haftalik, tam)
-        )
+    for kayit in kayitlar:
+        gruplar.setdefault(evren.get(kayit[0], "Diğer"), []).append(kayit)
 
     satirlar = []
     for pazar, liste in gruplar.items():
@@ -450,7 +469,7 @@ def hisse_satirlari(esik):
         liste.sort(key=lambda x: -x[2] if x[2] == x[2] else 0)   # NaN güvenli
         satirlar.append(f"\n<b>— {pazar}</b> ({len(liste)})")
 
-        for kod, fiyat, gunluk, haftalik, tam in liste:
+        for kod, fiyat, gunluk, haftalik, tam, seri_gun in liste:
             if gunluk != gunluk:                 # NaN ise doğrulama yapılmamış
                 satirlar.append(f"• <b>{kod}</b>"
                                 + (" ☪️" if kod in katilim else ""))
@@ -461,10 +480,15 @@ def hisse_satirlari(esik):
             if haftalik is not None and haftalik == haftalik:
                 isaret = "" if tam else "~"
                 satir += f"  <i>(1H: {isaret}{tr_yuzde(haftalik, 1)}%)</i>"
+            # 1 gün yazmıyoruz; satırın kendisi zaten o günü anlatıyor.
+            if seri_gun >= 2:
+                satir += f"  🔥{seri_gun} gün"
             if kod in katilim:
                 satir += " ☪️"
             satirlar.append(satir)
 
+    if any(kayit[5] >= 2 for kayit in kayitlar):
+        satirlar.append(f"\n<i>🔥 = üst üste %{esik:g}+ kapattığı gün sayısı</i>")
     if katilim:
         satirlar.append("\n<i>☪️ = BIST Katılım Tüm (XKTUM) kapsamında</i>")
     else:

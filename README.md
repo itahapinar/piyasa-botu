@@ -23,7 +23,7 @@ Sunucuya ihtiyaç yok: GitHub Actions her gün 08:50 TSİ'de çalıştırıyor.
 🚀 %9+ kapatanlar (21.08.2026)
 
 — Yıldız Pazar (2)
-• ABCDE:  14,72 TL  +9,84%  (1H: +12,3%) ☪️
+• ABCDE:  14,72 TL  +9,84%  (1H: +12,3%)  🔥3 gün ☪️
 • FGHIJ:  8,05 TL  +9,21%  (1H: ~+9,2%)
 
 — Ana / Alt Pazar (1)
@@ -31,6 +31,8 @@ Sunucuya ihtiyaç yok: GitHub Actions her gün 08:50 TSİ'de çalıştırıyor.
 
 — Diğer (1)
 • PQRST:  306,75 TL  +9,55%  (1H: -2,9%)
+
+🔥 = üst üste %9+ kapattığı gün sayısı
 
 ☪️ = BIST Katılım Tüm (XKTUM) kapsamında
 
@@ -151,6 +153,18 @@ Tek kaynağın bedeli: türetilen gram fiyatlar Kapalıçarşı'nın yaklaşık 
 2. `bp.scan(...)` ile eşiği aşanlar **tek istekte** bulunuyor (filtreleme TradingView sunucusunda yapılıyor).
 3. Adaylar **hedef seansın** kapanışıyla tek tek doğrulanıyor, haftalık değişim de burada çıkarılıyor. O gün işlem görmemiş kodlar eleniyor.
 4. Sonuçlar pazara göre gruplanıp günlük değişime göre sıralanıyor.
+
+### Yükseliş serisi (🔥)
+
+`yukselis_serisi()` her hissenin serisini sondan geriye tarayıp eşiği aşan ardışık gün sayısını çıkarıyor; 2 ve üzeri olduğunda satıra `🔥3 gün` düşüyor. Art arda tavan yapmak tek günlük sıçramadan farklı bir şey anlattığı için ayrı gösteriliyor. `1 gün` yazılmıyor — satırın kendisi zaten o günü anlatıyor.
+
+Ek maliyeti yok: `dogrula()` haftalık değişim için zaten 1 aylık seriyi çekiyor, sayım aynı seriden yapılıyor.
+
+Sayım **işlem günü** bazında. Hisse bir gün işlem görmezse (tedbir, sıra bekleme) o günün barı hiç oluşmuyor, dolayısıyla seri kesilmiş sayılmıyor. Eşik `TAVAN_ESIK`'e bağlı olduğu için eşiği düşürürseniz sayı da gevşer — o yüzden dipnot "tavan" değil "üst üste %9+ kapattığı gün sayısı" diyor.
+
+Görebildiğimiz seri elimizdeki geçmişle sınırlı (`period="1mo"`, ~22 işlem günü). Yeni halka arzlarda geçmişin tamamı seri olabiliyor; o durumda da sayı olduğu gibi yazılıyor, çünkü seri gerçekten listelenme gününde başlamış oluyor.
+
+### Tarama penceresi
 
 İkinci adımdaki `change_percent`, TradingView'de **içinde bulunulan seansın** değişimi. Seans kapalıyken bu tam olarak istediğimiz şey. Seans açıkken ise anlık değişim demek; üçüncü adım yanlış adayları eliyor ama dün tavan yapıp bugün düşen bir hisse taramaya hiç giremediği için liste **eksik** kalabiliyor. Bot bunu saklamıyor, mesaja açık bir uyarı satırı koyuyor. Cron'un açılıştan uzak tutulmasının sebebi de bu.
 

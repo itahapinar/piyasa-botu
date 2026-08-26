@@ -110,5 +110,36 @@ kontrol("ons gümüş", bot.tr_fiyat(69.02), "69,02")
 kontrol("gram gümüş", bot.tr_fiyat(105.95), "105,95")
 kontrol("gram altın", bot.tr_fiyat(7163.35), "7.163")
 
+print("\n8) yukselis_serisi: üst üste kaç gün eşiği aştı")
+
+
+def seri(*fiyatlar):
+    """Fiyat listesinden günlük indeksli seri kurar."""
+    return pd.Series(
+        list(fiyatlar),
+        index=pd.bdate_range("2026-08-03", periods=len(fiyatlar)),
+    )
+
+
+# Her gün +%10: son üç değişimin hepsi eşik üstü
+kontrol("üst üste 3 gün", bot.yukselis_serisi(seri(100, 110, 121, 133.1), 9.0), 3)
+# Ortada eşiğin altında bir gün var, seri orada kesilir
+kontrol("araya giren zayıf gün seriyi keser",
+        bot.yukselis_serisi(seri(100, 110, 111, 122.1), 9.0), 1)
+# Sadece son gün eşik üstü
+kontrol("tek gün", bot.yukselis_serisi(seri(100, 105, 115.5), 9.0), 1)
+# Son gün eşiğin altında: seri yok
+kontrol("son gün eşik altında", bot.yukselis_serisi(seri(100, 110, 111), 9.0), 0)
+# Yeni halka arz: elimizdeki bütün geçmiş eşik üstü, sayı olduğu gibi yazılır
+kontrol("geçmişin tamamı seri", bot.yukselis_serisi(seri(100, 110, 121), 9.0), 2)
+# Tek barlık geçmişten değişim çıkmaz
+kontrol("tek bar", bot.yukselis_serisi(seri(100), 9.0), 0)
+kontrol("boş seri", bot.yukselis_serisi(seri(), 9.0), 0)
+# Eşik ayarlanabilir: +%9,5 ve +%10'luk iki gün. Eşik %9 iken ikisi de sayılır,
+# %10'a çıkarılınca ilk gün elenir ve seri kısalır.
+IKI_GUN = seri(100, 109.5, 120.45)
+kontrol("eşik %9 -> iki gün", bot.yukselis_serisi(IKI_GUN, 9.0), 2)
+kontrol("eşik %10 -> bir gün", bot.yukselis_serisi(IKI_GUN, 10.0), 1)
+
 print(f"\n{gecti} geçti, {basarisiz} başarısız")
 sys.exit(1 if basarisiz else 0)
