@@ -141,5 +141,46 @@ IKI_GUN = seri(100, 109.5, 120.45)
 kontrol("eşik %9 -> iki gün", bot.yukselis_serisi(IKI_GUN, 9.0), 2)
 kontrol("eşik %10 -> bir gün", bot.yukselis_serisi(IKI_GUN, 10.0), 1)
 
+print("\n9) yeniden_dene: geçici hatalarda tekrar denemeli")
+bot.BEKLEME = 0          # testte gerçekten beklemeyelim
+
+
+def sayaclı(dusecek_deneme_sayisi):
+    """İlk N çağrıda patlayan, sonrasında değer döndüren sahte iş."""
+    durum = {"cagri": 0}
+
+    def islem():
+        durum["cagri"] += 1
+        if durum["cagri"] <= dusecek_deneme_sayisi:
+            raise ConnectionError("TradingView bağlantıyı kapattı")
+        return "veri"
+
+    return islem, durum
+
+
+islem, durum = sayaclı(0)
+kontrol("ilk denemede geçerse tek çağrı", bot.yeniden_dene(islem, "test"), "veri")
+kontrol("  çağrı sayısı", durum["cagri"], 1)
+
+islem, durum = sayaclı(2)
+kontrol("iki hatadan sonra başarılı", bot.yeniden_dene(islem, "test"), "veri")
+kontrol("  çağrı sayısı", durum["cagri"], 3)
+
+islem, durum = sayaclı(99)
+try:
+    bot.yeniden_dene(islem, "test")
+    kontrol("hepsi düşerse hata yükselir", "istisna yok", "ConnectionError")
+except ConnectionError:
+    kontrol("hepsi düşerse hata yükselir", "ConnectionError", "ConnectionError")
+kontrol("  deneme sınırında durdu", durum["cagri"], bot.DENEME)
+
+# dogrula() yüzlerce hisseyi dolaştığı için orada deneme sayısı düşük tutuluyor
+islem, durum = sayaclı(99)
+try:
+    bot.yeniden_dene(islem, "test", deneme=2)
+except ConnectionError:
+    pass
+kontrol("deneme sayısı ayarlanabilir", durum["cagri"], 2)
+
 print(f"\n{gecti} geçti, {basarisiz} başarısız")
 sys.exit(1 if basarisiz else 0)

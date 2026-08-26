@@ -19,6 +19,7 @@ Kullanım:
 import os
 import sys
 from datetime import datetime, time, timedelta, timezone
+from time import sleep   # 'time' yukarıda datetime.time olduğu için sadece sleep
 
 import pandas as pd
 import requests
@@ -57,6 +58,13 @@ FX_KAPANIS = None
 ONS_GRAM = 31.1034768               # 1 troy ons = 31,1035 gram
 REFERANS_HISSELER = ("GARAN", "THYAO", "AKBNK")   # seans tarihini okuduğumuz likit kodlar
 
+# TradingView bağlantıyı ara sıra kapatıyor (websocket close frame). Ölçtüğümüz
+# kadarıyla ~12 istekte 1 düşüyor; günde bir çalışan bot için bu, ayda birkaç kez
+# yarım mesaj demek. 26.08.2026'da üç referans hisse aynı anda düştü ve mesajın
+# hisse bölümü hiç üretilemedi.
+DENEME = 3                          # tek seferlik kritik çağrılar için
+BEKLEME = 2.0                       # saniye, denemeler arası
+
 # ---------------------------------------------------------------- yardımcı
 
 
@@ -84,6 +92,25 @@ def tr_fiyat(x):
 def tr_yuzde(x, ondalik=2):
     """9.99 -> '+9,99'   (işaret her zaman görünür, ondalık virgülle)"""
     return f"{x:+.{ondalik}f}".replace(".", ",")
+
+
+def yeniden_dene(islem, ad, deneme=None):
+    """islem()'i hata alırsa tekrar dener; hepsi düşerse son hatayı yükseltir.
+
+    Yeniden deneme sayısı çağrı yerine göre değişiyor: tek seferlik kritik
+    çağrılarda DENEME, yüzlerce hisseyi dolaşan dogrula()'da 2. Aksi hâlde
+    TradingView'in geniş bir kesintisinde iş 25 dakikalık timeout'a dayanırdı.
+    """
+    deneme = DENEME if deneme is None else deneme
+    for sira in range(1, deneme + 1):
+        try:
+            return islem()
+        except Exception as e:
+            if sira == deneme:
+                raise
+            log(f"  {ad}: {type(e).__name__}, {BEKLEME:g} sn sonra tekrar "
+                f"({sira}/{deneme - 1})")
+            sleep(BEKLEME)
 
 
 def _sutun_bul(df, adaylar):
@@ -147,7 +174,8 @@ def bist_seansi():
     """
     for kod in REFERANS_HISSELER:
         try:
-            ham = gunluk_seri(bp.Ticker(kod).history(period="1mo")["Close"])
+            ham = gunluk_seri(yeniden_dene(
+                lambda: bp.Ticker(kod).history(period="1mo")["Close"], kod))
             kapali = kapanmis(ham, BIST_KAPANIS)
             if len(kapali) < 2:
                 continue
@@ -214,7 +242,7 @@ def _tv_serisi(sembol, borsa):
 def _tv_serisi_guvenli(sembol, borsa):
     """Tek kaynak çökerse mesajın tamamı gitmesin diye None dönüyoruz."""
     try:
-        return _tv_serisi(sembol, borsa)
+        return yeniden_dene(lambda: _tv_serisi(sembol, borsa), f"{borsa}:{sembol}")
     except Exception as e:
         log(f"  {borsa}:{sembol} alınamadı: {type(e).__name__}")
         return None
@@ -287,7 +315,7 @@ def tum_sirketler():
     Kaynak çökerse tarama endeks evreniyle devam etsin diye boş küme dönüyoruz.
     """
     try:
-        df = bp.companies()
+        df = yeniden_dene(bp.companies, "companies()")
         sutun = _sutun_bul(df, ["ticker", "symbol", "code"])
         if sutun is None:
             log(f"  companies() sembol sütunu yok: {list(df.columns)}")
@@ -318,7 +346,8 @@ def evreni_kur():
     """
     def bilesenler(endeks):
         try:
-            return set(bp.Index(endeks).component_symbols)
+            return set(yeniden_dene(
+                lambda: bp.Index(endeks).component_symbols, endeks))
         except Exception as e:
             log(f"  {endeks} alınamadı: {type(e).__name__}")
             return set()
@@ -365,12 +394,14 @@ def adaylari_bul(evren, esik):
     ile durumu kontrol ediyor ve sonuçları dogrula() ile hedef güne sabitliyor.
     """
     kodlar = list(evren.keys())
-    df = bp.scan(kodlar, f"change_percent > {esik}", limit=300)
+    df = yeniden_dene(
+        lambda: bp.scan(kodlar, f"change_percent > {esik}", limit=300), "tarama")
 
     if df is None or df.empty:
         # Sağlama: gerçekten kimse yükselmedi mi, yoksa veri mi gelmedi?
         # Normal bir seansta yüzlerce hisse %0.5'ten fazla yükselir.
-        kontrol = bp.scan(kodlar, "change_percent > 0.5", limit=10)
+        kontrol = yeniden_dene(
+            lambda: bp.scan(kodlar, "change_percent > 0.5", limit=10), "sağlama")
         if kontrol is None or kontrol.empty:
             raise VeriYok("tarama tamamen boş döndü")
         return []
@@ -393,7 +424,9 @@ def dogrula(kodlar, esik, hedef):
     for kod in kodlar:
         try:
             # 5d yerine 1mo: aynı istek sayısı, ama haftalık hesap için yeterli geçmiş
-            seri = gunluk_seri(bp.Ticker(kod).history(period="1mo")["Close"])
+            seri = gunluk_seri(yeniden_dene(
+                lambda: bp.Ticker(kod).history(period="1mo")["Close"], kod,
+                deneme=2))
             seri = seri[seri.index <= hedef]
             # Son bar hedef gün değilse hisse o seansta işlem görmemiş
             # (sıra bekliyor, tedbir var, yeni halka arz vs.) - listeye almıyoruz.

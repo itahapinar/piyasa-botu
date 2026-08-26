@@ -178,6 +178,7 @@ Liste hiç gelmezse mesaj sessizce işaretsiz gitmiyor; dipnotun yerine açık b
 
 ### Dayanıklılık
 
+- TradingView bağlantıyı ara sıra kapatıyor (ölçtüğümüz kadarıyla ~12 istekte 1). Her veri çağrısı hata alınca 2 saniye arayla tekrar deneniyor (`yeniden_dene`). Seans tarihini okuyan adım üç referans hisseyi sırayla deniyor, her biri üç kez: yani mesajın hisse bölümünün düşmesi için 9 ardışık hata gerekiyor. `dogrula()` yüzlerce hisseyi dolaştığı için orada deneme sayısı 2 — aksi hâlde geniş bir kesintide iş 25 dakikalık timeout'a dayanırdı.
 - Tarama boş dönerse `change_percent > 0.5` ile sağlama yapılıyor — "kimse yükselmedi" ile "veri hiç gelmedi" ayırt ediliyor, ikincisinde mesaja uyarı düşülüyor.
 - Aday sayısı 100'ü aşarsa (`MAX_DOGRULAMA`) tek tek doğrulama atlanıyor, sadece kodlar listeleniyor. Seans açıkken bu mümkün değil: doğrulama yapılamıyorsa elde sadece anlık veri kalır, onu "kapanış" diye yazmaktansa liste hiç yazılmıyor.
 - Bir metal kaynağı çökerse o satır `⚠️ veri alınamadı` olup mesajın geri kalanı yine gidiyor. USDTRY düşerse sadece gram satırları kayboluyor, ons satırları kalıyor.
