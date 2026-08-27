@@ -3,34 +3,24 @@
 
 name: Sabah Piyasa Botu
 
+# TEK TETİKLEYİCİ: workflow_dispatch.
+#
+# Burada bilerek "schedule" yok. GitHub'ın kendi zamanlayıcısı bu repoda
+# güvenilir çalışmadı - cron "50 5 * * *" (08:50 TSİ) yerinde dururken:
+#     25.08.2026  hiç çalışmadı
+#     26.08.2026  06:19 UTC   (30 dk geç)
+#     27.08.2026  16:49 UTC   (11 saat geç, mesaj akşam 19:49'da gitti)
+# GitHub schedule'ı garanti etmiyor; yoğunlukta geciktiriyor, bazen tamamen
+# düşürüyor ve private repolarda önceliği daha düşük.
+#
+# Buna karşılık workflow_dispatch ile tetiklenen çalışmaların hepsi saniyesinde
+# başladı. Bu yüzden zamanlama dışarıdan yapılıyor: cron-job.org her sabah
+# 08:50 TSİ'de GitHub API'sine istek atıyor (kurulumu README'de).
 on:
-  schedule:
-    # DİKKAT: cron her zaman UTC'dir. Türkiye UTC+3 (yaz saati yok).
-    # İstediğin TSİ saatinden 3 saat çıkar.
-    #   08:50 TSİ -> 05:50 UTC
-    # Alanlar: dakika saat ayın_günü ay haftanın_günü
-    # Son alan "*" = her gün (hafta sonu dahil).
-    # Sadece hafta içi istersen son alanı 1-5 yap.
-    #
-    # 08:50'de BIST kapalı (açılış seansı 09:40, ilk işlem ~10:00), o yüzden
-    # tarama dünkü kapanışı görüyor ve liste tam geliyor.
-    #
-    # NEDEN :50, tam saat değil? GitHub zamanlanmış işleri kuyruğa alıyor ve
-    # tam saatler (:00) en yoğun slot. 24.08.2026'da "0 6" ayarıyla iş 10:12'de
-    # çalıştı - açılıştan sonra. :50 hem o yığılmadan kaçıyor hem ilk işleme
-    # ~70 dakika pay bırakıyor.
-    #
-    # Yine de gecikirse felaket değil: bot.py hedef seansı verinin kendisinden
-    # sabitliyor, rakamlar dünkü kapanışa ait kalıyor. Sadece aday listesi eksik
-    # kalabilir ve mesaja bunu söyleyen bir uyarı düşer.
-    - cron: "50 5 * * *"
-
-  # Actions sekmesinden "Run workflow" ile elle tetiklemeni sağlar.
-  # Test için şart; bunu koymazsan ertesi sabahı beklemek zorunda kalırsın.
   workflow_dispatch:
     inputs:
       esik:
-        description: "Yüzde eşiği (elle çalıştırmada)"
+        description: "Yüzde eşiği"
         required: false
         default: "9.0"
 

@@ -7,7 +7,7 @@ Her sabah Telegram'a tek bir mesaj gönderen küçük bir bot. Mesajda iki böl�
 
 Her iki bölüm de **son kapanmış seansa** ait; bot saat kaçta çalışırsa çalışsın rakamlar değişmez.
 
-Sunucuya ihtiyaç yok: GitHub Actions her gün 08:50 TSİ'de çalıştırıyor.
+Sunucuya ihtiyaç yok: iş GitHub Actions'ta çalışıyor, her sabah 08:50 TSİ'de dışarıdan tetikleniyor ([neden dışarıdan?](#4-günlük-tetikleyiciyi-kur)).
 
 ## Örnek mesaj
 
@@ -60,7 +60,7 @@ Sunucuya ihtiyaç yok: GitHub Actions her gün 08:50 TSİ'de çalıştırıyor.
 
 `Actions → Sabah Piyasa Botu → Run workflow`. Buradan eşiği elle de girebilirsin (varsayılan `9.0`).
 
-Fork'larda zamanlanmış workflow'lar varsayılan olarak kapalıdır; Actions sekmesinde bir kez etkinleştirmen gerekir.
+Bu adım aynı zamanda bir sonraki adımın ön koşulu: `workflow_dispatch` bir kez çalışmadan GitHub API'si o workflow'u tetiklenebilir görmeyebiliyor.
 
 ## Yerelde çalıştırma
 
@@ -94,20 +94,49 @@ Hepsi ortam değişkeni:
 
 `TAVAN_ESIK` ondalık ayırıcı olarak virgülü de kabul eder (`9,5`), bozuk bir değer gelirse varsayılana döner.
 
-### Çalışma saatini değiştirme
+### 4. Günlük tetikleyiciyi kur
 
-`.github/workflows/daily.yml` içindeki cron **UTC**'dir, Türkiye UTC+3:
+**Bu adım olmadan otomatik mesaj gelmez.** Workflow'da bilerek `schedule` yok.
 
-```yaml
-- cron: "50 5 * * *"   # 08:50 TSİ, her gün
-- cron: "50 5 * * 1-5" # 08:50 TSİ, sadece hafta içi
+GitHub'ın kendi zamanlayıcısı bu repoda güvenilir çalışmadı. Cron `"50 5 * * *"` (08:50 TSİ) yerinde dururken:
+
+| Gün | Beklenen | Gerçekleşen |
+|---|---|---|
+| 25.08.2026 | 05:50 UTC | **hiç çalışmadı** |
+| 26.08.2026 | 05:50 UTC | 06:19 UTC (30 dk geç) |
+| 27.08.2026 | 05:50 UTC | 16:49 UTC (**11 saat geç**) |
+
+GitHub `schedule`'ı garanti etmiyor: yoğunlukta geciktiriyor, bazen tamamen düşürüyor, private repolarda önceliği daha düşük. Buna karşılık `workflow_dispatch` ile tetiklenen çalışmaların hepsi saniyesinde başladı. O yüzden zamanlama dışarıdan yapılıyor.
+
+**a) GitHub token'ı üret.** [Fine-grained token](https://github.com/settings/personal-access-tokens/new) oluşturun:
+
+- *Repository access* → Only select repositories → `piyasa-botu`
+- *Permissions* → Repository permissions → **Actions: Read and write**
+- Süreyi uzun tutun; dolduğunda tetikleyici sessizce durur
+
+**b) [cron-job.org](https://console.cron-job.org)'da iş oluşturun** (ücretsiz):
+
+| Alan | Değer |
+|---|---|
+| URL | `https://api.github.com/repos/<kullanıcı>/piyasa-botu/actions/workflows/daily.yml/dispatches` |
+| Method | `POST` |
+| Zaman | Her gün 08:50, timezone **Europe/Istanbul** |
+| Body | `{"ref":"main"}` |
+
+Header'lar:
+
+```
+Authorization: Bearer <token>
+Accept: application/vnd.github+json
+X-GitHub-Api-Version: 2022-11-28
+Content-Type: application/json
 ```
 
-08:50'de BIST kapalı (açılış seansı 09:40, ilk işlem ~10:00), o yüzden tarama dünkü kapanışı görüyor ve liste tam geliyor.
+**c) Test edin.** cron-job.org'da "Test run" deyin. Başarılıysa GitHub **204 No Content** döner (gövde boş olur, bu normaldir) ve Actions sekmesinde yeni bir çalışma belirir. 401/403 gelirse token yetkisi, 404 gelirse URL'deki kullanıcı adı ya da dosya adı yanlıştır.
 
-Dakikanın `:50` olması tesadüf değil: GitHub zamanlanmış işleri kuyruğa alıyor ve tam saatler (`:00`) en yoğun slot. 24.08.2026'da `"0 6 * * *"` ayarıyla iş 10:12'de çalıştı. `:50` hem o yığılmadan kaçıyor hem ilk işleme ~70 dakika pay bırakıyor.
+Saati değiştirmek isterseniz cron-job.org tarafından ayarlayın; repoda saat bilgisi tutulmuyor. 08:50 seçilmesinin sebebi BIST'in o saatte kapalı olması (açılış seansı 09:40, ilk işlem ~10:00) — tarama dünkü kapanışı görüyor ve liste tam geliyor.
 
-Yine de gecikirse felaket değil: rakamlar dünkü kapanışa sabitlenir (aşağıdaki *Hedef seans*), sadece aday listesi eksik kalabilir ve mesaja uyarı düşer.
+Gecikirse felaket değil: rakamlar son kapanmış seansa sabitlenir (aşağıdaki *Hedef seans*), sadece aday listesi eksik kalabilir ve mesaja uyarı düşer.
 
 ## Nasıl çalışıyor
 
